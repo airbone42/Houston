@@ -17,8 +17,10 @@ class Houston {
 		$this->oCallableSet = $oCallableSet;
 	}
 	
-	public function addCallable(Houston_Callable_WithEvents_Struct $oCallableStruct) {
-		$this->oCallableSet->add($oCallableStruct);
+	public function addCallable($sIdentifier, $cCallable, $aEvents = array()) {
+		$oFactoryCallable = new Houston_Callable_Factory($sIdentifier, $cCallable, $aEvents);
+		$oCallable = $oFactoryCallable->build();
+		$this->oCallableSet->add($oCallable);
 	}
 	
 	public function launch($sIdentifier) {
