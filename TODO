@@ -1,0 +1,5 @@
+- daemon support
+- communicate over a fourth pipe
+- use serialized objects between processes
+- integrate other process types (not php)
+- kill and terminate processes
