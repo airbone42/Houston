@@ -1,27 +1,28 @@
 <?php
 // init houston
 require('Houston.php');
-$oHouston = new Houston_Processmanager();
+$oHouston = new Houston();
 
 // define your processes needed as callables
-$iIdUnderworld = $oHouston->addProcess(
+$oCallableFactory = new Houston_Callable_Factory(
+	'underworld', // unique identifier
+	function () {
+		echo 'Hello Underworld - ' . getmypid();
+	}
+);
+$oCallable = $oCallableFactory->build();
+// add them to houston
+$oHouston->addCallable($oCallable);
+
+$oCallableFactory = new Houston_Callable_Factory(
+	'world', // unique identifier
 	function () use ($oHouston) {
-		echo 'Hello Underworld ' . getmypid();
+		echo 'Hello World - ' . getmypid();
+		$oHouston->runSubprocess('underworld');
 	}
 );
-$iIdWorld = $oHouston->addProcess(
-	function () use ($oHouston, $iIdUnderworld) {
-		// launch from subprocess
-		$oHouston->runProcessInBackground($iIdUnderworld);
-		echo 'Hello World ' . getmypid();
-	}
-);
+$oCallable = $oCallableFactory->build();
+// add them to houston
+$oHouston->addCallable($oCallable);
 
-// only on first call
-if (!isset($argv[1])) {
-	// launch
-	$oHouston->runProcessInBackground($iIdWorld);
-}
-
-// handle events and output of subprocesses
-$oHouston->handleEvents();
+$oHouston->launch('world');
