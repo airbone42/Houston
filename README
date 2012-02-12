@@ -1,4 +1,11 @@
 A microframework to create multi-threaded php applications
 
+See example1.php to just create one subprocess
+See example2.php to create subprocesses from subprocesses
+See example3.php to call events from subprocess in parent process
+
+I'm currently working on lot of new features, see TODO what's planned
+
+Contact me if you need any help:
 tobias.zander@sitewards.com
 @airbone42
