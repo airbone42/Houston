@@ -7,12 +7,13 @@ $oHouston = new Houston();
 $oHouston->addCallable(	
 	'underworld', // unique identifier
 	function () use ($oHouston) {
+		echo 'Hello Underworld - ' . getmypid() . "\n";
 		$oHouston->triggerEvent('weHaveAProblem');
-		echo 'Hello Underworld - ' . getmypid();
+		echo 'Underworld is still running - ' . getmypid();
 	},
 	array( // define events
 		'weHaveAProblem' => function () {
-			echo 'back in parent process ' . getmypid();
+			echo 'back in parent process ' . getmypid() . "\n";
 		}
 	)
 );
@@ -20,7 +21,7 @@ $oHouston->addCallable(
 $oHouston->addCallable(	
 	'world', // unique identifier
 	function () use ($oHouston) {
-		echo 'Hello World - ' . getmypid();
+		echo 'Hello World - ' . getmypid() . "\n";
 		$oHouston->runSubprocess('underworld');
 	}
 );

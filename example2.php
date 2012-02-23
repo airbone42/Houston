@@ -14,7 +14,7 @@ $oHouston->addCallable(
 $oHouston->addCallable(	
 	'world', // unique identifier
 	function () use ($oHouston) {
-		echo 'Hello World - ' . getmypid();
+		echo 'Hello World - ' . getmypid() . "\n";
 		$oHouston->runSubprocess('underworld');
 	}
 );

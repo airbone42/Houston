@@ -224,7 +224,7 @@ class Houston_Process implements Houston_Processhandler_Interface {
 	}
 	
 	public function getOutput() {
-		return stream_get_contents($this->aPipes[1]);
+		return fgets($this->aPipes[1]);
 	}
 }
 

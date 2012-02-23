@@ -5,3 +5,4 @@
 - intergrate more communication types between processes: 4. pipe, sqlite, memcached, filesystem ...
 - integration exception handling from sub- thrown to mainprocess
 - handleevent time interval configurable
+- houston definition in external and multiple files (so houston can be run from inside a project)
