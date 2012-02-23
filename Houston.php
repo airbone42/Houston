@@ -35,19 +35,21 @@ class Houston {
 	}
 	
 	public function runSubprocess($sIdentifier) {
+		//FIXME law of demeter
 		$this->oProcessmanager->runSubprocess(
 			$this->oCallableSet->get($sIdentifier)->oCallable,
-			$this->oCallableSet->get($sIdentifier)->oEvents
+			$this->oCallableSet->get($sIdentifier)->oOutputhandler
 		);
 	}
 		
-	public function triggerEvent($sEventName) {
-		echo Houston_Eventhandler::getEventName($sEventName);
+	public function triggerEvent($sEventName, $aParams = array()) {
+		echo Houston_Eventhandler::getEventName($sEventName) .
+			json_encode(serialize($aParams)) . "\n";
 	}	
 }
 class Houston_Callable_Factory {
 	private $cCallable;
-	private $aEvents = array();
+	private $aEvents;
 	private $sIdentifier;
 	
 	public function __construct($sIdentifier = NULL, $cCallable = NULL, $aEvents = NULL) {
@@ -88,9 +90,9 @@ class Houston_Callable_Factory {
 				new Houston_Callable($sIdentifier, $cEvent)
 			);
 		}
-		return new Houston_Callable_WithEvents_Struct(
+		return new Houston_Callable_WithOutputhandler_Struct(
 			$oCallable,
-			$oEvents
+			new Houston_Eventhandler($oEvents)
 		); 
 	}
 }
@@ -119,19 +121,25 @@ class Houston_Callable implements Houston_Callable_Interface {
 		return $this->oIdentifier->getIdentifier();
 	}
 
-	public function call() {
-		$cCallable = $this->cCallable;
-		$cCallable();
+	public function call($aParams = NULL) {
+		call_user_func_array(
+			$this->cCallable, 
+			(
+				is_array($aParams) ?
+				$aParams :
+				array()
+			)
+		);
 	}
 }
 
-class Houston_Callable_WithEvents_Struct implements Houston_Callable_Interface {
+class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Interface {
 	public $oCallable;
-	public $oEvents;
+	public $oOutputhandler;
 	
-	public function __construct(Houston_Callable $oCallable, Houston_Events $oEvents) {
+	public function __construct(Houston_Callable $oCallable, Houston_Outputhandler $oOutputhandler) {
 		$this->oCallable = $oCallable;
-		$this->oEvents = $oEvents;
+		$this->oOutputhandler = $oOutputhandler;
 	}
 	
 	public function call() {
@@ -153,8 +161,8 @@ class Houston_CallableSet {
 		$this->aCallables[$oCallable->getIdentifier()] = $oCallable;
 	}
 	
-	public function call($sIdentifier) {
-		$this->get($sIdentifier)->call();
+	public function call($sIdentifier, $aParams = NULL) {
+		$this->get($sIdentifier)->call($aParams);
 	}
 	
 	public function get($sIdentifier) {
@@ -165,9 +173,14 @@ class Houston_CallableSet {
 	}
 }
 
-class Houston_Eventhandler {
+interface Houston_Outputhandler {
+	public function handleOutput($sOutput);
+}
+
+class Houston_Eventhandler implements Houston_Outputhandler {
 	const EVENT_SEPARATOR = '###';
 	private $oEvents;
+	private $aEventParams;
 	
 	public function __construct(Houston_Events $oEvents = NULL) {
 		$this->oEvents = $oEvents;
@@ -176,9 +189,16 @@ class Houston_Eventhandler {
 	public function handleOutput($sOutput) {
 		if (!is_null($this->oEvents)) {
 			foreach ($this->oEvents->getEventNames() as $sEventName) {
-				if (is_integer(strpos($sOutput, self::getEventName($sEventName)))) {
-					$sOutput = str_replace(self::getEventName($sEventName), '', $sOutput);
-					$this->oEvents->call($sEventName);
+				$sEventNameMasked = self::getEventName($sEventName);
+				$iPosEvent = strpos($sOutput, $sEventNameMasked);
+				if (is_integer($iPosEvent)) {
+					$sParams = substr($sOutput, $iPosEvent + strlen($sEventNameMasked));
+					$aParams = unserialize(json_decode($sParams));
+					$sOutput = substr($sOutput, 0, $iPosEvent);
+					ob_start();
+					$this->oEvents->call($sEventName, $aParams);
+					$sOutput .= ob_get_contents();
+					ob_end_clean();
 				}
 			}
 		}
@@ -239,11 +259,11 @@ class Houston_Process implements Houston_Processhandler_Interface {
 
 class Houston_Processhandler implements Houston_Processhandler_Interface {
 	public $oProcess;
-	public $oEventhandler;
+	public $oOutputhandler;
 	
-	public function __construct(Houston_Process $oProcess, Houston_Eventhandler $oEventhandler) {
+	public function __construct(Houston_Process $oProcess, Houston_Outputhandler $oOutputhandler) {
 		$this->oProcess = $oProcess;
-		$this->oEventhandler = $oEventhandler;
+		$this->oOutputhandler = $oOutputhandler;
 	}
 	
 	public function isRunning() {
@@ -252,7 +272,7 @@ class Houston_Processhandler implements Houston_Processhandler_Interface {
 	
 	public function getOutput() {
 		$sOutput = $this->oProcess->getOutput();
-		$sOutput = $this->oEventhandler->handleOutput($sOutput);
+		$sOutput = $this->oOutputhandler->handleOutput($sOutput);
 		return $sOutput;
 	}
 }
@@ -265,19 +285,18 @@ interface Houston_Processhandler_Interface {
 class Houston_Processmanager implements Houston_Processmanager_Interface {
 	private $aPipes = array();
 	private $aSubprocessesRunning = array();
-	private $aEventhandlers = array();
+	private $aOutputhandlers = array();
 	private $sDefinitionFile = NULL;
 	
-	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Events $oEvents = NULL) {
+	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Outputhandler $oOutputhandler = NULL) {
 		$oProcess = new Houston_Process($oCallable);
 		if (!is_null($this->sDefinitionFile)) {
 			$oProcess->setDefinitionFile($this->sDefinitionFile);
 		}
 		$oProcess->runSubprocess();
-		$oEventhandler = new Houston_Eventhandler($oEvents);
 		$oProcesshandler = new Houston_Processhandler(
 			$oProcess, 
-			$oEventhandler
+			$oOutputhandler
 		);
 		$this->aSubprocessesRunning[] = $oProcesshandler;
 	}
@@ -302,7 +321,7 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 
 interface Houston_Processmanager_Interface {
 	public function handleSubprocesses();
-	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Events $oEvents);
+	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Outputhandler $oOutputhandler);
 }
 
 class Houston_Callable_Identifier implements Houston_Callable_Identifier_Interface {
