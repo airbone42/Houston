@@ -23,12 +23,12 @@ class Houston {
 		$this->oCallableSet->add($oCallable);
 	}
 	
-	public function launch($sIdentifier) {
+	public function launch($sIdentifier = NULL) {
 		global $argv;
 		if (isset($argv[1])) {
 			$sIdentifier = $argv[1];
 			$this->oCallableSet->call($sIdentifier);
-		} else {
+		} elseif (!is_null($sIdentifier)) {
 			$this->runSubprocess($sIdentifier);
 		}
 		$this->oProcessmanager->handleSubprocesses();
@@ -36,7 +36,8 @@ class Houston {
 	
 	public function runSubprocess($sIdentifier) {
 		$this->oProcessmanager->runSubprocess(
-			$this->oCallableSet->get($sIdentifier)
+			$this->oCallableSet->get($sIdentifier)->oCallable,
+			$this->oCallableSet->get($sIdentifier)->oEvents
 		);
 	}
 		
@@ -93,12 +94,21 @@ class Houston_Callable_Factory {
 		); 
 	}
 }
+
+interface Houston_Callable_Identifier_Interface {
+	public function getIdentifier();
+}
+
+interface Houston_Callable_Interface extends Houston_Callable_Identifier_Interface {
+	public function call();
+}
+
 class Houston_Callable implements Houston_Callable_Interface {
 	private $cCallable;
-	private $sIdentifier;
+	private $oIdentifier;
 		
 	public function __construct($sIdentifier, $cCallable) {
-		$this->sIdentifier = $sIdentifier;
+		$this->oIdentifier = new Houston_Callable_Identifier($sIdentifier);
 		if (!is_callable($cCallable)) {
 			throw new Exception('callable expected');
 		}
@@ -106,22 +116,13 @@ class Houston_Callable implements Houston_Callable_Interface {
 	}
 	
 	public function getIdentifier() {
-		return $this->sIdentifier;
+		return $this->oIdentifier->getIdentifier();
 	}
-	
-	public function setIdentifier($sIdentifier) {
-		$this->sIdentifier = $sIdentifier;
-	}
-	
+
 	public function call() {
 		$cCallable = $this->cCallable;
 		$cCallable();
 	}
-}
-
-interface Houston_Callable_Interface {
-	public function call();
-	public function getIdentifier();
 }
 
 class Houston_Callable_WithEvents_Struct implements Houston_Callable_Interface {
@@ -168,15 +169,17 @@ class Houston_Eventhandler {
 	const EVENT_SEPARATOR = '###';
 	private $oEvents;
 	
-	public function __construct(Houston_Events $oEvents) {
+	public function __construct(Houston_Events $oEvents = NULL) {
 		$this->oEvents = $oEvents;
 	}
 	
 	public function handleOutput($sOutput) {
-		foreach ($this->oEvents->getEventNames() as $sEventName) {
-			if (is_integer(strpos($sOutput, self::getEventName($sEventName)))) {
-				$sOutput = str_replace(self::getEventName($sEventName), '', $sOutput);
-				$this->oEvents->call($sEventName);
+		if (!is_null($this->oEvents)) {
+			foreach ($this->oEvents->getEventNames() as $sEventName) {
+				if (is_integer(strpos($sOutput, self::getEventName($sEventName)))) {
+					$sOutput = str_replace(self::getEventName($sEventName), '', $sOutput);
+					$this->oEvents->call($sEventName);
+				}
 			}
 		}
 		return $sOutput;
@@ -197,9 +200,11 @@ class Houston_Process implements Houston_Processhandler_Interface {
 	private $oCallable;
 	private $rProcess;
 	private $aPipes;
+	private $sDefinitionFile;
 	
-	public function __construct(Houston_Callable $oCallable) {
+	public function __construct(Houston_Callable_Identifier_Interface $oCallable) {
 		$this->oCallable = $oCallable;
+		$this->sDefinitionFile = $_SERVER['SCRIPT_FILENAME'];
 	}
 
 	public function runSubprocess() {
@@ -209,7 +214,7 @@ class Houston_Process implements Houston_Processhandler_Interface {
 		   2 => array("pipe", "w"), // stderr is a file to write to
 		);
 		$this->rProcess = proc_open(
-			'php ' . escapeshellarg($_SERVER['SCRIPT_FILENAME']) . ' ' . $this->oCallable->getIdentifier(), 
+			'php ' . escapeshellarg($this->sDefinitionFile) . ' ' . $this->oCallable->getIdentifier(), 
 			$aDescriptorspec, 
 			$this->aPipes
  		);
@@ -225,6 +230,10 @@ class Houston_Process implements Houston_Processhandler_Interface {
 	
 	public function getOutput() {
 		return fgets($this->aPipes[1]);
+	}
+	
+	public function setDefinitionFile($sDefinitionFile) {
+		$this->sDefinitionFile = $sDefinitionFile;
 	}
 }
 
@@ -257,11 +266,15 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 	private $aPipes = array();
 	private $aSubprocessesRunning = array();
 	private $aEventhandlers = array();
+	private $sDefinitionFile = NULL;
 	
-	public function runSubprocess(Houston_Callable_WithEvents_Struct $oCallableStruct) {
-		$oProcess = new Houston_Process($oCallableStruct->oCallable);
+	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Events $oEvents = NULL) {
+		$oProcess = new Houston_Process($oCallable);
+		if (!is_null($this->sDefinitionFile)) {
+			$oProcess->setDefinitionFile($this->sDefinitionFile);
+		}
 		$oProcess->runSubprocess();
-		$oEventhandler = new Houston_Eventhandler($oCallableStruct->oEvents);
+		$oEventhandler = new Houston_Eventhandler($oEvents);
 		$oProcesshandler = new Houston_Processhandler(
 			$oProcess, 
 			$oEventhandler
@@ -281,9 +294,43 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 			usleep(100);
 		}
 	}
+	
+	public function setDefinitionFile($sDefinitionFile) {
+		$this->sDefinitionFile = $sDefinitionFile;
+	}
 }
 
 interface Houston_Processmanager_Interface {
 	public function handleSubprocesses();
-	public function runSubprocess(Houston_Callable_WithEvents_Struct $oCallableStruct);
+	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Events $oEvents);
+}
+
+class Houston_Callable_Identifier implements Houston_Callable_Identifier_Interface {
+	private $sIdentifier;
+	
+	public function __construct($sIdentifier) {
+		$this->sIdentifier = $sIdentifier;
+	}
+	
+	public function getIdentifier() {
+		return $this->sIdentifier;
+	}
+}
+
+class Houston_Launcher {
+	private $sDefinitionFile;
+	
+	public function __construct($sDefinitionFile) {
+		$this->sDefinitionFile = $sDefinitionFile;
+	}
+	
+	public function launch($sIdentifier) {
+		$oProcessmanager = new Houston_Processmanager();
+		$oProcessmanager->setDefinitionFile($this->sDefinitionFile);
+		$oProcessmanager->runSubprocess(
+			new Houston_Callable_Identifier($sIdentifier)
+		);
+		$oProcessmanager->handleSubprocesses();
+		
+	}
 }
