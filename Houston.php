@@ -39,7 +39,8 @@ class Houston implements Houston_EventTrigger {
 	private function initParams() {
 		if ($this->sIdentifierCalled) {
 			$sStdin = fgets(STDIN);
-			$this->aParams = unserialize(json_decode($sStdin));
+			$oSerialize = new Houston_Serialize();
+			$this->aParams = $oSerialize->unserialize($sStdin);
 		}
 	}
 	
@@ -58,15 +59,8 @@ class Houston implements Houston_EventTrigger {
 		$this->launchIdentified();
 	}
 	
-	private function exceptionHandler(Exception $oException) {
-		$this->oCallableSet->triggerEvent(
-			'exception',
-			array(
-				$oException->getMessage(),
-				$oException->getCode(),
-				$oException->getPrevious()
-			)
-		);
+	private function handleException(Exception $oException) {
+		$this->oCallableSet->handleException($oException);
 	}
 	
 	public function runSubprocess($sIdentifier, $aParams = NULL) {
@@ -92,7 +86,7 @@ class Houston implements Houston_EventTrigger {
 		try {
 			$this->oCallableSet->callIdentified($this->aParams);
 		} catch (Exception $oException) {
-			$this->exceptionHandler($oException);
+			$this->handleException($oException);
 		}
 	}
 	
@@ -196,7 +190,7 @@ class Houston_Callable implements Houston_Callable_Interface {
 	}
 }
 
-class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Interface, Houston_EventTrigger {
+class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Interface, Houston_EventTrigger, Houston_ExceptionHandler {
 	public $oCallable;
 	public $oOutputhandler;
 	
@@ -216,6 +210,14 @@ class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Inte
 	public function getIdentifier() {
 		return $this->oCallable->getIdentifier();
 	}
+	
+	public function handleException(Exception $oException) {
+		$this->oOutputhandler->handleException($oException);
+	}
+}
+
+interface Houston_ExceptionHandler {
+	public function handleException(Exception $oException);
 }
 
 class Houston_CallableSet implements Houston_EventTrigger {
@@ -251,6 +253,15 @@ class Houston_CallableSet implements Houston_EventTrigger {
 		}
 	}
 	
+	public function handleException(Exception $oException) {
+		$this->validateIdentifier();
+		if ($this->aCallables[$this->sIdentifier] instanceof Houston_ExceptionHandler) {
+			$this->aCallables[$this->sIdentifier]->handleException($oException);
+		} else {
+			throw new Exception('callable is not instance of Houston_ExceptionHandler');
+		}
+	}
+	
 	private function validateIdentifier() {
 		if (is_null($this->sIdentifier)) {
 			throw new Exception('set identifier first');
@@ -268,12 +279,13 @@ class Houston_CallableSet implements Houston_EventTrigger {
 	}
 }
 
-interface Houston_Outputhandler extends Houston_EventTrigger {
+interface Houston_Outputhandler extends Houston_EventTrigger, Houston_ExceptionHandler {
 	public function handleOutput($sOutput);
 }
 
 class Houston_Eventhandler implements Houston_Outputhandler {
 	const EVENT_SEPARATOR = '###';
+	const EVENT_EXCEPTION = 'exception';
 	private $oEvents;
 	private $aEventParams;
 	private $oException;
@@ -283,7 +295,7 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 	}
 	
 	public function handleOutput($sOutput) {
-		$sExceptionNameMasked = $this->getEventName('exception');
+		$sExceptionNameMasked = $this->getEventName(self::EVENT_EXCEPTION);
 		$iPosException = $this->getEventPos($sOutput, $sExceptionNameMasked);
 		if (is_integer($iPosException)) {
 			$aParams = $this->getParams($sOutput, $sExceptionNameMasked, $iPosException);
@@ -310,7 +322,8 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 	
 	private function getParams($sOutput,$sEventNameMasked, $iPosEvent) {
 		$sParams = substr($sOutput, $iPosEvent + strlen($sEventNameMasked));
-		return unserialize(json_decode($sParams));
+		$oSerialize = new Houston_Serialize();
+		return $oSerialize->unserialize($sParams);
 	}
 	
 	private function getEventPos($sOutput, $sEventNameMasked) {
@@ -322,12 +335,31 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 	}
 
 	public function triggerEvent($sEventName, $aParams = NULL) {
-		echo $this->getEventName($sEventName) .
-			json_encode(serialize($aParams)) . "\n";
+		if ($sEventName == self::EVENT_EXCEPTION) {
+			throw new Exception('triggered reserved event name');
+		}
+		$this->outputEvent($sEventName, $aParams);
 	}
 	
 	public function getException() {
 		return $this->oException;
+	}
+	
+	public function handleException(Exception $oException) {
+		$this->outputEvent(
+			self::EVENT_EXCEPTION,
+			array(
+				$oException->getMessage(),
+				$oException->getCode(),
+				$oException->getPrevious()
+			)
+		);
+	}
+	
+	private function outputEvent($sEventName, $aParams = NULL) {
+		$oSerialize = new Houston_Serialize();
+		echo $this->getEventName($sEventName) .
+			$oSerialize->serialize($aParams) . "\n";
 	}
 }
 
@@ -363,7 +395,12 @@ class Houston_Process implements Houston_Processhandler_Interface {
 			$aDescriptorspec, 
 			$this->aPipes
  		);
- 		fwrite($this->aPipes[0], json_encode(serialize($this->aParams)));
+ 		$this->sendParams();
+	}
+	
+	private function sendParams() {
+ 		$oSerialize = new Houston_Serialize();
+ 		fwrite($this->aPipes[0], $oSerialize->serialize($this->aParams));
  		fclose($this->aPipes[0]);
 	}
 	
@@ -486,6 +523,15 @@ class Houston_Launcher {
 			new Houston_Callable_Identifier($sIdentifier)
 		);
 		$oProcessmanager->handleSubprocesses();
-		
+	}
+}
+
+class Houston_Serialize {
+	public function serialize($mixed) {
+		return json_encode(serialize($mixed));
+	}
+	
+	public function unserialize($sString) {
+		return unserialize(json_decode($sString));
 	}
 }
