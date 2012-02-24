@@ -1,8 +1,4 @@
 <?php
-interface Houston_EventTrigger {
-	public function triggerEvent($sEventName, $aParams = NULL);
-}
-
 class Houston implements Houston_EventTrigger {
 	private $oProcessmanager;
 	private $oCallableSet;
@@ -12,14 +8,26 @@ class Houston implements Houston_EventTrigger {
 		Houston_Processmanager_Interface $oProcessmanager = NULL,
 		Houston_CallableSet $oCallableSet = NULL
 	) {
+		$this->initProcessmanager($oProcessmanager);
+		$this->initCallableSet($oCallableSet);
+		$this->initIdentifierCalled();
+	}
+	
+	private function initProcessmanager(Houston_Processmanager_Interface $oProcessmanager = NULL) {
 		if (is_null($oProcessmanager)) {
 			$oProcessmanager = new Houston_Processmanager();
 		}
 		$this->oProcessmanager = $oProcessmanager;
+	}
+	
+	private function initCallableSet(Houston_CallableSet $oCallableSet = NULL) {
 		if (is_null($oCallableSet)) {
 			$oCallableSet = new Houston_CallableSet();
 		}
 		$this->oCallableSet = $oCallableSet;
+	}
+	
+	private function initIdentifierCalled() {
 		global $argv;
 		if (isset($argv[1])) {
 			$this->sIdentifierCalled = $argv[1];
@@ -33,24 +41,50 @@ class Houston implements Houston_EventTrigger {
 	}
 	
 	public function launch($sIdentifier = NULL) {
-		$this->oCallableSet->setIdentifier(
+		$this->setIdentifier(
 			$this->sIdentifierCalled ?
 			$this->sIdentifierCalled :
 			$sIdentifier
 		);
-		if ($this->sIdentifierCalled) {
-			$this->oCallableSet->callIdentified();
-		} elseif (!is_null($sIdentifier)) {
-			$this->runIdentifiedSubprocess();
-		}
-		$this->oProcessmanager->handleSubprocesses();
+		$this->launchIdentified();
+	}
+	
+	private function exceptionHandler(Exception $oException) {
+		$this->oCallableSet->triggerEvent(
+			'exception',
+			array(
+				$oException->getMessage(),
+				$oException->getCode(),
+				$oException->getPrevious()
+			)
+		);
 	}
 	
 	public function runSubprocess($sIdentifier) {
+		$this->setIdentifier($sIdentifier);
+		$this->runIdentifiedSubprocess();
+	}
+	
+	private function setIdentifier($sIdentifier) {
 		$this->oCallableSet->setIdentifier(
 			$sIdentifier
 		);
-		$this->runIdentifiedSubprocess();
+	}
+	
+	private function launchIdentified() {
+		if ($this->sIdentifierCalled) {
+			$this->callIdentified();
+		} else {
+			$this->runIdentifiedSubprocess();
+		}
+	}
+	
+	private function callIdentified() {
+		try {
+			$this->oCallableSet->callIdentified();
+		} catch (Exception $oException) {
+			$this->exceptionHandler($oException);
+		}
 	}
 	
 	private function runIdentifiedSubprocess() {
@@ -58,13 +92,14 @@ class Houston implements Houston_EventTrigger {
 			$this->oCallableSet->getIdentifiedCallable(),
 			$this->oCallableSet->getIdentifiedOutputhandler()
 		);
+		$this->oProcessmanager->handleSubprocesses();
 	}
 		
-	// TODO dann auch exception möglich
 	public function triggerEvent($sEventName, $aParams = NULL) {
 		$this->oCallableSet->triggerEvent($sEventName, $aParams);
 	}	
 }
+
 class Houston_Callable_Factory {
 	private $cCallable;
 	private $aEvents;
@@ -227,19 +262,26 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 	const EVENT_SEPARATOR = '###';
 	private $oEvents;
 	private $aEventParams;
+	private $oException;
 	
 	public function __construct(Houston_Events $oEvents = NULL) {
 		$this->oEvents = $oEvents;
 	}
 	
 	public function handleOutput($sOutput) {
+		$sExceptionNameMasked = $this->getEventName('exception');
+		$iPosException = $this->getEventPos($sOutput, $sExceptionNameMasked);
+		if (is_integer($iPosException)) {
+			$aParams = $this->getParams($sOutput, $sExceptionNameMasked, $iPosException);
+			$sOutput = substr($sOutput, 0, $iPosException);
+			$this->oException = new Exception($aParams[0], $aParams[1], $aParams[2]);
+		}
 		if (!is_null($this->oEvents)) {
 			foreach ($this->oEvents->getEventNames() as $sEventName) {
 				$sEventNameMasked = $this->getEventName($sEventName);
-				$iPosEvent = strpos($sOutput, $sEventNameMasked);
+				$iPosEvent = $this->getEventPos($sOutput, $sEventNameMasked);
 				if (is_integer($iPosEvent)) {
-					$sParams = substr($sOutput, $iPosEvent + strlen($sEventNameMasked));
-					$aParams = unserialize(json_decode($sParams));
+					$aParams = $this->getParams($sOutput, $sEventNameMasked, $iPosEvent);
 					$sOutput = substr($sOutput, 0, $iPosEvent);
 					ob_start();
 					$this->oEvents->setIdentifier($sEventName);
@@ -252,6 +294,15 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 		return $sOutput;
 	}
 	
+	private function getParams($sOutput,$sEventNameMasked, $iPosEvent) {
+		$sParams = substr($sOutput, $iPosEvent + strlen($sEventNameMasked));
+		return unserialize(json_decode($sParams));
+	}
+	
+	private function getEventPos($sOutput, $sEventNameMasked) {
+		return strpos($sOutput, $sEventNameMasked);
+	}
+	
 	private function getEventName($sEventName) {
 		return self::EVENT_SEPARATOR . $sEventName . self::EVENT_SEPARATOR;
 	}
@@ -259,6 +310,10 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 	public function triggerEvent($sEventName, $aParams = NULL) {
 		echo $this->getEventName($sEventName) .
 			json_encode(serialize($aParams)) . "\n";
+	}
+	
+	public function getException() {
+		return $this->oException;
 	}
 }
 
@@ -326,6 +381,9 @@ class Houston_Processhandler implements Houston_Processhandler_Interface {
 		$sOutput = $this->oProcess->getOutput();
 		if (!is_null($this->oOutputhandler)) {
 			$sOutput = $this->oOutputhandler->handleOutput($sOutput);
+			if ($this->oOutputhandler->getException()) {
+				throw $this->oOutputhandler->getException();
+			}
 		}
 		return $sOutput;
 	}
@@ -388,6 +446,10 @@ class Houston_Callable_Identifier implements Houston_Callable_Identifier_Interfa
 	public function getIdentifier() {
 		return $this->sIdentifier;
 	}
+}
+
+interface Houston_EventTrigger {
+	public function triggerEvent($sEventName, $aParams = NULL);
 }
 
 class Houston_Launcher {

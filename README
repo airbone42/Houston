@@ -5,6 +5,8 @@ See example2.php to create subprocesses from subprocesses
 See example3.php to call events from subprocess in parent process
 See example4.php to use invokable classes instead of closures
 See example5.php to use Houston in your existing application
+See example6.php to return values from subprocess to mainprocess
+See example7.php how to handle exceptions from subprocess in mainprocess
 
 I'm currently working on lot of new features, see TODO what's planned
 
