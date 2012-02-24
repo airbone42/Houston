@@ -1,7 +1,12 @@
 <?php
-class Houston {
+interface Houston_EventTrigger {
+	public function triggerEvent($sEventName, $aParams = NULL);
+}
+
+class Houston implements Houston_EventTrigger {
 	private $oProcessmanager;
 	private $oCallableSet;
+	private $sIdentifierCalled;
 	
 	public function __construct(
 		Houston_Processmanager_Interface $oProcessmanager = NULL,
@@ -15,6 +20,10 @@ class Houston {
 			$oCallableSet = new Houston_CallableSet();
 		}
 		$this->oCallableSet = $oCallableSet;
+		global $argv;
+		if (isset($argv[1])) {
+			$this->sIdentifierCalled = $argv[1];
+		}
 	}
 	
 	public function addCallable($sIdentifier, $cCallable, $aEvents = array()) {
@@ -24,27 +33,36 @@ class Houston {
 	}
 	
 	public function launch($sIdentifier = NULL) {
-		global $argv;
-		if (isset($argv[1])) {
-			$sIdentifier = $argv[1];
-			$this->oCallableSet->call($sIdentifier);
+		$this->oCallableSet->setIdentifier(
+			$this->sIdentifierCalled ?
+			$this->sIdentifierCalled :
+			$sIdentifier
+		);
+		if ($this->sIdentifierCalled) {
+			$this->oCallableSet->callIdentified();
 		} elseif (!is_null($sIdentifier)) {
-			$this->runSubprocess($sIdentifier);
+			$this->runIdentifiedSubprocess();
 		}
 		$this->oProcessmanager->handleSubprocesses();
 	}
 	
 	public function runSubprocess($sIdentifier) {
-		//FIXME law of demeter
+		$this->oCallableSet->setIdentifier(
+			$sIdentifier
+		);
+		$this->runIdentifiedSubprocess();
+	}
+	
+	private function runIdentifiedSubprocess() {
 		$this->oProcessmanager->runSubprocess(
-			$this->oCallableSet->get($sIdentifier)->oCallable,
-			$this->oCallableSet->get($sIdentifier)->oOutputhandler
+			$this->oCallableSet->getIdentifiedCallable(),
+			$this->oCallableSet->getIdentifiedOutputhandler()
 		);
 	}
 		
-	public function triggerEvent($sEventName, $aParams = array()) {
-		echo Houston_Eventhandler::getEventName($sEventName) .
-			json_encode(serialize($aParams)) . "\n";
+	// TODO dann auch exception möglich
+	public function triggerEvent($sEventName, $aParams = NULL) {
+		$this->oCallableSet->triggerEvent($sEventName, $aParams);
 	}	
 }
 class Houston_Callable_Factory {
@@ -133,7 +151,7 @@ class Houston_Callable implements Houston_Callable_Interface {
 	}
 }
 
-class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Interface {
+class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Interface, Houston_EventTrigger {
 	public $oCallable;
 	public $oOutputhandler;
 	
@@ -146,13 +164,18 @@ class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Inte
 		$this->oCallable->call();
 	}
 	
+	public function triggerEvent($sEventName, $aParams = NULL) {
+		$this->oOutputhandler->triggerEvent($sEventName, $aParams);
+	}
+	
 	public function getIdentifier() {
 		return $this->oCallable->getIdentifier();
 	}
 }
 
-class Houston_CallableSet {
+class Houston_CallableSet implements Houston_EventTrigger {
 	protected $aCallables = array();
+	private $sIdentifier = NULL;
 	
 	public function add(Houston_Callable_Interface $oCallable) {
 		if (isset($this->aCallables[$oCallable->getIdentifier()])) {
@@ -161,19 +184,42 @@ class Houston_CallableSet {
 		$this->aCallables[$oCallable->getIdentifier()] = $oCallable;
 	}
 	
-	public function call($sIdentifier, $aParams = NULL) {
-		$this->get($sIdentifier)->call($aParams);
+	public function setIdentifier($sIdentifier) {
+		$this->sIdentifier = $sIdentifier;
 	}
 	
-	public function get($sIdentifier) {
-		if (!isset($this->aCallables[$sIdentifier])) {
-			throw new Exception('unknown identifier');
+	public function callIdentified($aParams = NULL) {
+		$this->validateIdentifier();
+		$this->aCallables[$this->sIdentifier]->call($aParams);
+	}
+	
+	public function triggerEvent($sEventName, $aParams = NULL) {
+		$this->validateIdentifier();
+		if ($this->aCallables[$this->sIdentifier] instanceof Houston_EventTrigger) {
+			$this->aCallables[$this->sIdentifier]->triggerEvent($sEventName, $aParams);
+		} else {
+			throw new Exception('callable is not instance of Houston_EventTrigger');
 		}
-		return $this->aCallables[$sIdentifier];
+	}
+	
+	private function validateIdentifier() {
+		if (is_null($this->sIdentifier)) {
+			throw new Exception('set identifier first');
+		}
+	}
+	
+	public function getIdentifiedCallable() {
+		$this->validateIdentifier();
+		return $this->aCallables[$this->sIdentifier]->oCallable;
+	}
+	
+	public function getIdentifiedOutputhandler() {
+		$this->validateIdentifier();
+		return $this->aCallables[$this->sIdentifier]->oOutputhandler;
 	}
 }
 
-interface Houston_Outputhandler {
+interface Houston_Outputhandler extends Houston_EventTrigger {
 	public function handleOutput($sOutput);
 }
 
@@ -189,14 +235,15 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 	public function handleOutput($sOutput) {
 		if (!is_null($this->oEvents)) {
 			foreach ($this->oEvents->getEventNames() as $sEventName) {
-				$sEventNameMasked = self::getEventName($sEventName);
+				$sEventNameMasked = $this->getEventName($sEventName);
 				$iPosEvent = strpos($sOutput, $sEventNameMasked);
 				if (is_integer($iPosEvent)) {
 					$sParams = substr($sOutput, $iPosEvent + strlen($sEventNameMasked));
 					$aParams = unserialize(json_decode($sParams));
 					$sOutput = substr($sOutput, 0, $iPosEvent);
 					ob_start();
-					$this->oEvents->call($sEventName, $aParams);
+					$this->oEvents->setIdentifier($sEventName);
+					$this->oEvents->callIdentified($aParams);
 					$sOutput .= ob_get_contents();
 					ob_end_clean();
 				}
@@ -205,8 +252,13 @@ class Houston_Eventhandler implements Houston_Outputhandler {
 		return $sOutput;
 	}
 	
-	public static function getEventName($sEventName) {
+	private function getEventName($sEventName) {
 		return self::EVENT_SEPARATOR . $sEventName . self::EVENT_SEPARATOR;
+	}
+
+	public function triggerEvent($sEventName, $aParams = NULL) {
+		echo $this->getEventName($sEventName) .
+			json_encode(serialize($aParams)) . "\n";
 	}
 }
 
@@ -258,10 +310,10 @@ class Houston_Process implements Houston_Processhandler_Interface {
 }
 
 class Houston_Processhandler implements Houston_Processhandler_Interface {
-	public $oProcess;
-	public $oOutputhandler;
+	private $oProcess;
+	private $oOutputhandler;
 	
-	public function __construct(Houston_Process $oProcess, Houston_Outputhandler $oOutputhandler) {
+	public function __construct(Houston_Process $oProcess, Houston_Outputhandler $oOutputhandler = NULL) {
 		$this->oProcess = $oProcess;
 		$this->oOutputhandler = $oOutputhandler;
 	}
@@ -272,7 +324,9 @@ class Houston_Processhandler implements Houston_Processhandler_Interface {
 	
 	public function getOutput() {
 		$sOutput = $this->oProcess->getOutput();
-		$sOutput = $this->oOutputhandler->handleOutput($sOutput);
+		if (!is_null($this->oOutputhandler)) {
+			$sOutput = $this->oOutputhandler->handleOutput($sOutput);
+		}
 		return $sOutput;
 	}
 }
