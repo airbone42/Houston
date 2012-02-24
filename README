@@ -7,6 +7,7 @@ See example4.php to use invokable classes instead of closures
 See example5.php to use Houston in your existing application
 See example6.php to return values from subprocess to mainprocess
 See example7.php how to handle exceptions from subprocess in mainprocess
+See example8.php how to submit params to subprocess
 
 I'm currently working on lot of new features, see TODO what's planned
 
