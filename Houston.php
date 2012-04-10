@@ -96,7 +96,7 @@ class Houston implements Houston_EventTrigger {
 			$this->oCallableSet->getIdentifiedOutputhandler(),
 			$aParams
 		);
-		$this->oProcessmanager->handleSubprocesses();
+		$this->oProcessmanager->handleSubprocesses(new Houston_Processmanager_Handler());
 	}
 		
 	public function triggerEvent($sEventName, $aParams = NULL) {
@@ -457,7 +457,11 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 	private $aOutputhandlers = array();
 	private $sDefinitionFile = NULL;
 	
-	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Outputhandler $oOutputhandler = NULL, $aParams = NULL) {
+	public function runSubprocess(
+		Houston_Callable_Identifier_Interface $oCallable, 
+		Houston_Outputhandler $oOutputhandler = NULL, 
+		$aParams = NULL
+	) {
 		$oProcess = new Houston_Process($oCallable, $aParams);
 		if (!is_null($this->sDefinitionFile)) {
 			$oProcess->setDefinitionFile($this->sDefinitionFile);
@@ -467,17 +471,20 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 			$oProcess, 
 			$oOutputhandler
 		);
-		$this->aSubprocessesRunning[] = $oProcesshandler;
+		$iKeyProcess = count($this->aSubprocessesRunning);
+		$this->aSubprocessesRunning[$iKeyProcess] = $oProcesshandler;
+		return $iKeyProcess;
 	}
 	
-	public function handleSubprocesses() {
+	public function handleSubprocesses(Houston_Processmanager_Handler_Interface $oHandler) {
 		while (count($this->aSubprocessesRunning)) {
 			foreach ($this->aSubprocessesRunning as $iKeyProcess => $oProcess) {
 				if (!$oProcess->isRunning()) {
 					unset($this->aSubprocessesRunning[$iKeyProcess]);
+					$oHandler->removeProcess($iKeyProcess);
 				}
 				$sOutput = $oProcess->getOutput();
-				echo $sOutput;
+				$oHandler->sendOutput($iKeyProcess, $sOutput);
 			}
 			usleep(100);
 		}
@@ -489,8 +496,23 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 }
 
 interface Houston_Processmanager_Interface {
-	public function handleSubprocesses();
+	public function handleSubprocesses(Houston_Processmanager_Handler_Interface $oHandler);
 	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Outputhandler $oOutputhandler);
+}
+
+class Houston_Processmanager_Handler
+	implements Houston_Processmanager_Handler_Interface {
+	public function removeProcess($iKeyProcess) {
+	}
+	
+	public function sendOutput($iKeyProcess, $sOutput) {
+		echo $sOutput;
+	}
+}
+
+interface Houston_Processmanager_Handler_Interface {
+	public function removeProcess($iKeyProcess);
+	public function sendOutput($iKeyProcess, $sOutput);
 }
 
 class Houston_Callable_Identifier implements Houston_Callable_Identifier_Interface {
@@ -522,7 +544,7 @@ class Houston_Launcher {
 		$oProcessmanager->runSubprocess(
 			new Houston_Callable_Identifier($sIdentifier)
 		);
-		$oProcessmanager->handleSubprocesses();
+		$oProcessmanager->handleSubprocesses(new Houston_Processmanager_Handler());
 	}
 }
 
