@@ -158,24 +158,48 @@ interface Houston_Callable_Identifier_Interface {
 	public function getIdentifier();
 }
 
-interface Houston_Callable_Interface extends Houston_Callable_Identifier_Interface {
+interface Houston_Callable_Executable_Interface extends Houston_Callable_Identifier_Interface {
+	public function getExecutable($sDefinitionFile);
+}
+
+interface Houston_Callable_Interface extends Houston_Callable_Executable_Interface {
 	public function call();
 }
 
-class Houston_Callable implements Houston_Callable_Interface {
+class Houston_Callable_Identifier implements Houston_Callable_Identifier_Interface {
+	private $sIdentifier;
+	
+	public function __construct($sIdentifier) {
+		$this->sIdentifier = $sIdentifier;
+	}
+	
+	public function getIdentifier() {
+		return $this->sIdentifier;
+	}
+}
+
+class Houston_Callable_Executable 
+	extends Houston_Callable_Identifier
+	implements Houston_Callable_Executable_Interface {
+		
+	public function getExecutable($sDefinitionFile) {
+		return 'php ' . 
+			escapeshellarg($sDefinitionFile) . ' ' . 
+			$this->getIdentifier();
+	}
+}
+
+class Houston_Callable 
+	extends Houston_Callable_Executable
+	implements Houston_Callable_Interface {
 	private $cCallable;
-	private $oIdentifier;
 		
 	public function __construct($sIdentifier, $cCallable) {
-		$this->oIdentifier = new Houston_Callable_Identifier($sIdentifier);
+		parent::__construct($sIdentifier);
 		if (!is_callable($cCallable)) {
 			throw new Exception('callable expected');
 		}
 		$this->cCallable = $cCallable;
-	}
-	
-	public function getIdentifier() {
-		return $this->oIdentifier->getIdentifier();
 	}
 
 	public function call($aParams = NULL) {
@@ -213,6 +237,10 @@ class Houston_Callable_WithOutputhandler_Struct implements Houston_Callable_Inte
 	
 	public function handleException(Exception $oException) {
 		$this->oOutputhandler->handleException($oException);
+	}
+	
+	public function getExecutable($sDefinitionFile) {
+		return $this->oCallable->getExecutable($sDefinitionFile);
 	}
 }
 
@@ -376,7 +404,7 @@ class Houston_Process implements Houston_Processhandler_Interface {
 	private $sDefinitionFile;
 	private $aParams;
 	
-	public function __construct(Houston_Callable_Identifier_Interface $oCallable, $aParams = NULL) {
+	public function __construct(Houston_Callable_Executable_Interface $oCallable, $aParams = NULL) {
 		$this->oCallable = $oCallable;
 		$this->sDefinitionFile = $_SERVER['SCRIPT_FILENAME'];
 		$this->aParams = $aParams;
@@ -388,14 +416,17 @@ class Houston_Process implements Houston_Processhandler_Interface {
 		   1 => array("pipe", "w"), // stdout is a pipe that the child will write to
 		   2 => array("pipe", "w"), // stderr is a file to write to
 		);
+
 		$this->rProcess = proc_open(
-			'php ' . 
-				escapeshellarg($this->sDefinitionFile) . ' ' . 
-				$this->oCallable->getIdentifier(), 
+			$this->getExecutable(), 
 			$aDescriptorspec, 
 			$this->aPipes
  		);
  		$this->sendParams();
+	}
+	
+	private function getExecutable() {
+		return $this->oCallable->getExecutable($this->sDefinitionFile);
 	}
 	
 	private function sendParams() {
@@ -458,7 +489,7 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 	private $sDefinitionFile = NULL;
 	
 	public function runSubprocess(
-		Houston_Callable_Identifier_Interface $oCallable, 
+		Houston_Callable_Executable_Interface $oCallable, 
 		Houston_Outputhandler $oOutputhandler = NULL, 
 		$aParams = NULL
 	) {
@@ -497,7 +528,7 @@ class Houston_Processmanager implements Houston_Processmanager_Interface {
 
 interface Houston_Processmanager_Interface {
 	public function handleSubprocesses(Houston_Processmanager_Handler_Interface $oHandler);
-	public function runSubprocess(Houston_Callable_Identifier_Interface $oCallable, Houston_Outputhandler $oOutputhandler);
+	public function runSubprocess(Houston_Callable_Executable_Interface $oCallable, Houston_Outputhandler $oOutputhandler);
 }
 
 class Houston_Processmanager_Handler
@@ -515,18 +546,6 @@ interface Houston_Processmanager_Handler_Interface {
 	public function sendOutput($iKeyProcess, $sOutput);
 }
 
-class Houston_Callable_Identifier implements Houston_Callable_Identifier_Interface {
-	private $sIdentifier;
-	
-	public function __construct($sIdentifier) {
-		$this->sIdentifier = $sIdentifier;
-	}
-	
-	public function getIdentifier() {
-		return $this->sIdentifier;
-	}
-}
-
 interface Houston_EventTrigger {
 	public function triggerEvent($sEventName, $aParams = NULL);
 }
@@ -542,7 +561,7 @@ class Houston_Launcher {
 		$oProcessmanager = new Houston_Processmanager();
 		$oProcessmanager->setDefinitionFile($this->sDefinitionFile);
 		$oProcessmanager->runSubprocess(
-			new Houston_Callable_Identifier($sIdentifier)
+			new Houston_Callable_Executable($sIdentifier)
 		);
 		$oProcessmanager->handleSubprocesses(new Houston_Processmanager_Handler());
 	}
