@@ -1,5 +1,4 @@
 - daemon support (for main- and subprocesses)
-- integrate other process types (not php)
 - kill and terminate processes
 - intergrate more communication types between processes: 4. pipe, sqlite, memcached, filesystem ...
 - handleevent time interval configurable
